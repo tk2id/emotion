@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>감정 인식 테스트</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background-color: #f5f7fa;
+      margin: 0;
+      padding: 30px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    h1 {
+      margin-bottom: 10px;
+    }
+    #controls {
+      margin-bottom: 20px;
+    }
+    button {
+      background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      margin: 0 10px;
+      font-size: 16px;
+      border-radius: 30px;
+      cursor: pointer;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+      transition: all 0.3s ease;
+    }
+    button:hover {
+      filter: brightness(1.1);
+      transform: translateY(-2px);
+    }
+    #layout {
+      display: grid;
+      grid-template-columns: 200px 660px 1fr;
+      gap: 20px;
+      width: 100%;
+      max-width: 1300px;
+      align-items: flex-start;
+    }
+    .card {
+      background-color: white;
+      padding: 20px;
+      border-radius: 10px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+    #emotionBox {
+      text-align: left;
+      width: 100%;
+      position: relative;
+      z-index: 1;
+      margin-left: -50px;
+    }
+    #videoBox {
+      position: relative;
+      z-index: 0;
+    }
+    #video {
+      border-radius: 10px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      display: block;
+      position: relative;
+      z-index: 0;
+    }
+    #chartBox {
+      width: 100%;
+      z-index: 0;
+    }
+    .top-emotion {
+      font-weight: bold;
+      font-size: 20px;
+      margin-bottom: 10px;
+    }
+    #summary {
+      margin-top: 30px;
+      font-size: 18px;
+      text-align: center;
+      background: white;
+      padding: 20px;
+      border-radius: 10px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      max-width: 800px;
+      width: 100%;
+    }
+  </style>
+  <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+  <script defer>
+    document.addEventListener('DOMContentLoaded', () => {
+      const video = document.getElementById('video');
+      const emotionDisplay = document.getElementById('emotion');
+      const emotionList = document.getElementById('emotionList');
+      const ctx = document.getElementById('emotionChart').getContext('2d');
+      const summary = document.getElementById('summary');
+
+      const emotionMap = {
+        happy: "😊 행복",
+        sad: "😢 슬픔",
+        angry: "😠 화남",
+        surprised: "😲 놀람",
+        disgusted: "🤢 혐오",
+        fearful: "😱 두려움",
+        neutral: "😐 무표정"
+      };
+
+      let emotionChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: [],
+          datasets: Object.keys(emotionMap).map(emotion => ({
+            label: emotionMap[emotion],
+            data: [],
+            borderWidth: 1,
+            fill: false
+          }))
+        },
+        options: {
+          responsive: true,
+          scales: {
+            y: {
+              min: 0,
+              max: 100,
+              ticks: {
+                callback: function(value) {
+                  return value + "%";
+                }
+              }
+            }
+          }
+        }
+      });
+
+      let startTime = null;
+      let intervalId = null;
+      let emotionLog = [];
+
+      async function startCamera() {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        video.srcObject = stream;
+        return stream;
+      }
+
+      async function startSession() {
+        startTime = new Date();
+        await startCamera();
+        intervalId = setInterval(analyzeEmotion, 1000);
+      }
+
+      function stopSession() {
+        const endTime = new Date();
+        const duration = Math.floor((endTime - startTime) / 1000);
+        const minutes = Math.floor(duration / 60);
+        const seconds = duration % 60;
+
+        clearInterval(intervalId);
+        const tracks = video.srcObject.getTracks();
+        tracks.forEach(track => track.stop());
+        video.srcObject = null;
+
+        // 감정 요약 계산
+        const emotionCounts = {};
+        emotionLog.forEach(name => {
+          emotionCounts[name] = (emotionCounts[name] || 0) + 1;
+        });
+
+        const total = emotionLog.length;
+        const summaryText = Object.entries(emotionCounts).map(([key, count]) => {
+          const percent = ((count / total) * 100).toFixed(1);
+          return `${emotionMap[key]}: ${percent}%`;
+        }).join('<br>');
+
+        summary.innerHTML = `🕒 총 업무 시간: ${minutes}분 ${seconds}초<br>📊 감정 요약:<br>${summaryText}`;
+        emotionLog = []; // 초기화
+      }
+
+      async function analyzeEmotion() {
+        const detections = await faceapi
+          .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
+          .withFaceExpressions();
+
+        const canvas = document.querySelector("canvas");
+        const resized = faceapi.resizeResults(detections, { width: 640, height: 480 });
+        canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+        faceapi.draw.drawDetections(canvas, resized);
+
+        if (detections.length > 0) {
+          const exp = detections[0].expressions;
+          const sorted = Object.entries(exp).sort((a, b) => b[1] - a[1]);
+          const topEmotion = sorted[0][0];
+
+          emotionDisplay.innerHTML = `<div class="top-emotion">현재 감정: ${emotionMap[topEmotion]}</div>`;
+          emotionList.innerHTML = sorted.map(([key, val]) => {
+            const percent = (val * 100).toFixed(1);
+            return `${emotionMap[key] || key}: ${percent}%`;
+          }).join('<br>');
+
+          emotionLog.push(topEmotion);
+
+          const now = new Date().toLocaleTimeString();
+          emotionChart.data.labels.push(now);
+          if (emotionChart.data.labels.length > 20) emotionChart.data.labels.shift();
+          emotionChart.data.datasets.forEach(ds => {
+            const emoKey = Object.keys(emotionMap).find(k => emotionMap[k] === ds.label);
+            const val = (exp[emoKey] || 0) * 100;
+            ds.data.push(val);
+            if (ds.data.length > 20) ds.data.shift();
+          });
+          emotionChart.update();
+        } else {
+          emotionDisplay.innerHTML = "얼굴을 찾을 수 없어요 😶";
+          emotionList.innerHTML = "";
+        }
+      }
+
+      Promise.all([
+        faceapi.nets.tinyFaceDetector.loadFromUri('./models/tiny_face_detector'),
+        faceapi.nets.faceExpressionNet.loadFromUri('./models/face_expression_model')
+      ]).then(() => {
+        const canvas = faceapi.createCanvasFromMedia(video);
+        document.getElementById('videoBox').append(canvas);
+        faceapi.matchDimensions(canvas, { width: 640, height: 480 });
+      });
+
+      document.getElementById('startBtn').addEventListener('click', startSession);
+      document.getElementById('stopBtn').addEventListener('click', stopSession);
+    });
+  </script>
+</head>
+<body>
+  <h1> 업무 감정 분석</h1>
+  <div id="controls">
+    <button id="startBtn">업무 시작</button>
+    <button id="stopBtn">업무 종료</button>
+  </div>
+  <div id="layout">
+    <div id="emotionBox" class="card">
+      <div id="emotion">감정 인식 대기 중...</div>
+      <div id="emotionList"></div>
+    </div>
+    <div id="videoBox">
+      <video id="video" width="640" height="480" autoplay muted></video>
+    </div>
+    <div id="chartBox" class="card">
+      <canvas id="emotionChart" width="300" height="300"></canvas>
+    </div>
+  </div>
+  <div id="summary"></div>
+</body>
+</html>
